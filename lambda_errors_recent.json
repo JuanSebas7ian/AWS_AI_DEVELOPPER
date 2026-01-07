@@ -1,0 +1,31 @@
+{
+  "function": "math-function",
+  "log_group": "/aws/lambda/math-function",
+  "search_period": "Last 24 hours",
+  "total_errors": 3,
+  "error_summary": {
+    "type": "Runtime.UserCodeSyntaxError",
+    "severity": "CRITICAL",
+    "status": "RESOLVED",
+    "first_occurrence": "2025-11-14T00:30:55.939Z",
+    "last_occurrence": "2025-11-14T00:31:23.097Z",
+    "error_message": "Syntax error in module 'lambda_function': invalid character '−' (U+2212) (lambda_function.py, line 7)",
+    "root_cause": "Unicode minus sign (U+2212) instead of ASCII hyphen (U+002D)",
+    "affected_code": "return num1 − num2",
+    "fix": "return num1 - num2"
+  },
+  "occurrences": [
+    {
+      "timestamp": "2025-11-14T00:30:55.939Z",
+      "log_stream": "2025/11/14/[$LATEST]0d3d4a9a417f4c5f976c7732f279e109"
+    },
+    {
+      "timestamp": "2025-11-14T00:30:56.067Z",
+      "log_stream": "2025/11/14/[$LATEST]0d3d4a9a417f4c5f976c7732f279e109"
+    },
+    {
+      "timestamp": "2025-11-14T00:31:23.097Z",
+      "log_stream": "2025/11/14/[$LATEST]0d3d4a9a417f4c5f976c7732f279e109"
+    }
+  ]
+}

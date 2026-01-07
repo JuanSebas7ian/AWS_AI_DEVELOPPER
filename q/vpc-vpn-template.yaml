@@ -1,0 +1,190 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Parameters:
+  KeyPair:
+    Type: AWS::EC2::KeyPair::KeyName
+  OnPremIP:
+    Type: String
+    Description: On-premises public IP for VPN
+  OnPremCIDR:
+    Type: String
+    Default: '10.0.0.0/16'
+
+Resources:
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: '172.16.0.0/16'
+      EnableDnsHostnames: true
+
+  PrivateSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: '172.16.1.0/24'
+      AvailabilityZone: !Select [0, !GetAZs '']
+
+  VPNGateway:
+    Type: AWS::EC2::VpnGateway
+    Properties:
+      Type: ipsec.1
+
+  VPNAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      VpnGatewayId: !Ref VPNGateway
+
+  CustomerGateway:
+    Type: AWS::EC2::CustomerGateway
+    Properties:
+      Type: ipsec.1
+      BgpAsn: 65000
+      IpAddress: !Ref OnPremIP
+
+  VPNConnection:
+    Type: AWS::EC2::VPNConnection
+    Properties:
+      Type: ipsec.1
+      StaticRoutesOnly: true
+      CustomerGatewayId: !Ref CustomerGateway
+      VpnGatewayId: !Ref VPNGateway
+
+  VPNRoute:
+    Type: AWS::EC2::VPNConnectionRoute
+    Properties:
+      VpnConnectionId: !Ref VPNConnection
+      DestinationCidrBlock: !Ref OnPremCIDR
+
+  RouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+
+  VPNGatewayRoute:
+    Type: AWS::EC2::Route
+    DependsOn: VPNAttachment
+    Properties:
+      RouteTableId: !Ref RouteTable
+      DestinationCidrBlock: !Ref OnPremCIDR
+      GatewayId: !Ref VPNGateway
+
+  SubnetAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnet
+      RouteTableId: !Ref RouteTable
+
+  SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: VPN-only access
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 5000
+          ToPort: 5000
+          CidrIp: !Ref OnPremCIDR
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref OnPremCIDR
+
+  EC2Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: ami-0c02fb55956c7d316
+      InstanceType: t3.micro
+      KeyName: !Ref KeyPair
+      SubnetId: !Ref PrivateSubnet
+      SecurityGroupIds: [!Ref SecurityGroup]
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          yum update -y
+          yum install -y python3 python3-pip
+          pip3 install Flask==2.3.3
+          
+          mkdir -p /opt/app/templates
+          cat > /opt/app/app.py << 'EOF'
+          from flask import Flask, render_template, request, redirect, url_for
+          import json, os
+          
+          app = Flask(__name__)
+          
+          class TaskManager:
+              def __init__(self):
+                  self.file = "tasks.json"
+                  self.tasks = self.load()
+          
+              def load(self):
+                  if os.path.exists(self.file):
+                      with open(self.file) as f:
+                          return json.load(f)
+                  return []
+          
+              def save(self):
+                  with open(self.file, 'w') as f:
+                      json.dump(self.tasks, f)
+          
+              def add(self, name, priority):
+                  self.tasks.append({"name": name, "priority": priority})
+                  self.tasks.sort(key=lambda x: x["priority"])
+                  self.save()
+          
+              def remove(self, index):
+                  if 0 <= index < len(self.tasks):
+                      self.tasks.pop(index)
+                      self.save()
+          
+          manager = TaskManager()
+          
+          @app.route('/')
+          def index():
+              return render_template('index.html', tasks=manager.tasks)
+          
+          @app.route('/add', methods=['POST'])
+          def add():
+              name = request.form.get('name', '').strip()
+              priority = request.form.get('priority', '').strip()
+              if name and priority:
+                  manager.add(name, priority)
+              return redirect('/')
+          
+          @app.route('/remove/<int:index>')
+          def remove(index):
+              manager.remove(index)
+              return redirect('/')
+          
+          if __name__ == '__main__':
+              app.run(host='0.0.0.0', port=5000)
+          EOF
+          
+          cat > /opt/app/templates/index.html << 'EOF'
+          <!DOCTYPE html>
+          <html>
+          <head><title>Task Tracker</title></head>
+          <body>
+              <h1>Task Tracker</h1>
+              <form method="POST" action="/add">
+                  <input type="text" name="name" placeholder="Task" required>
+                  <input type="text" name="priority" placeholder="Priority" required>
+                  <button type="submit">Add</button>
+              </form>
+              {% for task in tasks %}
+              <div>
+                  [{{ task.priority }}] {{ task.name }}
+                  <a href="/remove/{{ loop.index0 }}"><button>Remove</button></a>
+              </div>
+              {% endfor %}
+          </body>
+          </html>
+          EOF
+          
+          cd /opt/app
+          nohup python3 app.py &
+
+Outputs:
+  InstanceIP:
+    Value: !GetAtt EC2Instance.PrivateIp
+  VPNGatewayId:
+    Value: !Ref VPNGateway

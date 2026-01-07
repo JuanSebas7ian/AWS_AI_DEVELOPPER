@@ -1,0 +1,329 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Task Tracker Flask App on EC2 in Private Subnet with VPN'
+
+Parameters:
+  KeyPairName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: EC2 Key Pair for SSH access
+  OnPremisesCIDR:
+    Type: String
+    Default: '10.0.0.0/16'
+    Description: On-premises network CIDR block
+
+Resources:
+  # VPC
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: '172.16.0.0/16'
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value: TaskTrackerVPC
+
+  # Private Subnet
+  PrivateSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: '172.16.1.0/24'
+      AvailabilityZone: !Select [0, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: TaskTrackerPrivateSubnet
+
+  # Virtual Private Gateway
+  VPNGateway:
+    Type: AWS::EC2::VpnGateway
+    Properties:
+      Type: ipsec.1
+      Tags:
+        - Key: Name
+          Value: TaskTrackerVPNGateway
+
+  # Attach VPN Gateway to VPC
+  VPNGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      VpnGatewayId: !Ref VPNGateway
+
+  # Customer Gateway (placeholder - replace with actual on-premises IP)
+  CustomerGateway:
+    Type: AWS::EC2::CustomerGateway
+    Properties:
+      Type: ipsec.1
+      BgpAsn: 65000
+      IpAddress: 203.0.113.12  # Replace with actual on-premises public IP
+      Tags:
+        - Key: Name
+          Value: TaskTrackerCustomerGateway
+
+  # VPN Connection
+  VPNConnection:
+    Type: AWS::EC2::VPNConnection
+    Properties:
+      Type: ipsec.1
+      StaticRoutesOnly: true
+      CustomerGatewayId: !Ref CustomerGateway
+      VpnGatewayId: !Ref VPNGateway
+      Tags:
+        - Key: Name
+          Value: TaskTrackerVPNConnection
+
+  # VPN Connection Route
+  VPNConnectionRoute:
+    Type: AWS::EC2::VPNConnectionRoute
+    Properties:
+      VpnConnectionId: !Ref VPNConnection
+      DestinationCidrBlock: !Ref OnPremisesCIDR
+
+  # Route Table for Private Subnet
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: TaskTrackerPrivateRouteTable
+
+  # Route to VPN Gateway
+  VPNRoute:
+    Type: AWS::EC2::Route
+    DependsOn: VPNGatewayAttachment
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      DestinationCidrBlock: !Ref OnPremisesCIDR
+      GatewayId: !Ref VPNGateway
+
+  # Associate Route Table with Private Subnet
+  PrivateSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnet
+      RouteTableId: !Ref PrivateRouteTable
+
+  # Security Group - Only VPN Traffic
+  TaskTrackerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for Task Tracker app - VPN access only
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 5000
+          ToPort: 5000
+          CidrIp: !Ref OnPremisesCIDR
+          Description: Flask app access from on-premises
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref OnPremisesCIDR
+          Description: SSH access from on-premises
+      Tags:
+        - Key: Name
+          Value: TaskTrackerSecurityGroup
+
+  # IAM Role for EC2
+  EC2Role:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+
+  # Instance Profile
+  EC2InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref EC2Role
+
+  # EC2 Instance
+  TaskTrackerInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: ami-0c02fb55956c7d316  # Amazon Linux 2 AMI
+      InstanceType: t3.micro
+      KeyName: !Ref KeyPairName
+      SubnetId: !Ref PrivateSubnet
+      SecurityGroupIds:
+        - !Ref TaskTrackerSecurityGroup
+      IamInstanceProfile: !Ref EC2InstanceProfile
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          yum update -y
+          yum install -y python3 python3-pip git
+          
+          # Create app directory
+          mkdir -p /opt/tasktracker
+          cd /opt/tasktracker
+          
+          # Create Flask app files
+          cat > app.py << 'EOF'
+          from flask import Flask, render_template, request, redirect, url_for
+          import json
+          import os
+          
+          app = Flask(__name__)
+          
+          class Task:
+              def __init__(self, name, priority):
+                  self.name = name
+                  self.priority = priority
+          
+              def to_dict(self):
+                  return {"name": self.name, "priority": self.priority}
+          
+          class TaskManager:
+              def __init__(self, filename="tasks.json"):
+                  self.filename = filename
+                  self.tasks = self.load_tasks()
+          
+              def load_tasks(self):
+                  if os.path.exists(self.filename):
+                      with open(self.filename, 'r') as f:
+                          data = json.load(f)
+                          return [Task(task['name'], task['priority']) for task in data]
+                  return []
+          
+              def save_tasks(self):
+                  with open(self.filename, 'w') as f:
+                      json.dump([task.to_dict() for task in self.tasks], f)
+          
+              def add_task(self, name, priority):
+                  task = Task(name, priority)
+                  self.tasks.append(task)
+                  self.tasks.sort(key=lambda x: x.priority)
+                  self.save_tasks()
+          
+              def remove_task(self, index):
+                  if 0 <= index < len(self.tasks):
+                      self.tasks.pop(index)
+                      self.save_tasks()
+                      return True
+                  return False
+          
+          manager = TaskManager()
+          
+          @app.route('/')
+          def index():
+              return render_template('index.html', tasks=manager.tasks)
+          
+          @app.route('/add', methods=['POST'])
+          def add_task():
+              name = request.form.get('name', '').strip()
+              priority = request.form.get('priority', '').strip()
+              if name and priority:
+                  manager.add_task(name, priority)
+              return redirect(url_for('index'))
+          
+          @app.route('/remove/<int:index>')
+          def remove_task(index):
+              manager.remove_task(index)
+              return redirect(url_for('index'))
+          
+          if __name__ == '__main__':
+              app.run(host='0.0.0.0', port=5000)
+          EOF
+          
+          # Create templates directory and HTML file
+          mkdir -p templates
+          cat > templates/index.html << 'EOF'
+          <!DOCTYPE html>
+          <html>
+          <head>
+              <title>Task Tracker</title>
+              <style>
+                  body { font-family: Arial, sans-serif; max-width: 600px; margin: 50px auto; padding: 20px; }
+                  .task { background: #f4f4f4; margin: 10px 0; padding: 10px; border-radius: 5px; display: flex; justify-content: space-between; align-items: center; }
+                  .form-group { margin: 10px 0; }
+                  input, button { padding: 8px; margin: 5px; }
+                  button { background: #007cba; color: white; border: none; border-radius: 3px; cursor: pointer; }
+                  button:hover { background: #005a87; }
+                  .remove-btn { background: #dc3545; }
+                  .remove-btn:hover { background: #c82333; }
+              </style>
+          </head>
+          <body>
+              <h1>Task Tracker</h1>
+              
+              <form method="POST" action="/add">
+                  <div class="form-group">
+                      <input type="text" name="name" placeholder="Task name" required>
+                      <input type="text" name="priority" placeholder="Priority" required>
+                      <button type="submit">Add Task</button>
+                  </div>
+              </form>
+          
+              <div>
+                  {% if tasks %}
+                      {% for task in tasks %}
+                      <div class="task">
+                          <span>[Priority {{ task.priority }}] {{ task.name }}</span>
+                          <a href="/remove/{{ loop.index0 }}">
+                              <button class="remove-btn">Remove</button>
+                          </a>
+                      </div>
+                      {% endfor %}
+                  {% else %}
+                      <p>No tasks found.</p>
+                  {% endif %}
+              </div>
+          </body>
+          </html>
+          EOF
+          
+          # Install Flask
+          pip3 install Flask==2.3.3
+          
+          # Create systemd service
+          cat > /etc/systemd/system/tasktracker.service << 'EOF'
+          [Unit]
+          Description=Task Tracker Flask App
+          After=network.target
+          
+          [Service]
+          Type=simple
+          User=ec2-user
+          WorkingDirectory=/opt/tasktracker
+          ExecStart=/usr/bin/python3 app.py
+          Restart=always
+          
+          [Install]
+          WantedBy=multi-user.target
+          EOF
+          
+          # Change ownership and start service
+          chown -R ec2-user:ec2-user /opt/tasktracker
+          systemctl daemon-reload
+          systemctl enable tasktracker
+          systemctl start tasktracker
+      Tags:
+        - Key: Name
+          Value: TaskTrackerInstance
+
+Outputs:
+  VPCId:
+    Description: VPC ID
+    Value: !Ref VPC
+  
+  InstanceId:
+    Description: EC2 Instance ID
+    Value: !Ref TaskTrackerInstance
+  
+  PrivateIP:
+    Description: Private IP of the instance
+    Value: !GetAtt TaskTrackerInstance.PrivateIp
+  
+  VPNGatewayId:
+    Description: VPN Gateway ID
+    Value: !Ref VPNGateway

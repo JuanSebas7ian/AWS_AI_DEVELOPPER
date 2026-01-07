@@ -1,0 +1,35 @@
+# Optimized requirements with pinned versions for Python 3.12 compatibility
+# Use: pip install --prefer-binary -r requirements.txt
+
+# AWS SDK y herramientas
+# AWS SDK y herramientas
+awscli>=1.32.0
+boto3>=1.34.0
+sagemaker>=2.200.0
+
+# Bibliotecas de Machine Learning e IA
+scikit-learn>=1.5.0
+tensorflow>=2.16.0
+torch>=2.3.0
+transformers>=4.40.0
+
+# Manipulación de datos
+numpy>=1.26.0
+pandas>=2.2.0
+
+# Visualización y análisis
+matplotlib>=3.8.0
+seaborn>=0.13.0
+
+# Entorno de desarrollo
+ipykernel>=6.29.0
+jupyter>=1.0.0
+
+# Otras utilidades comunes
+python-dotenv>=1.0.0
+requests>=2.32.0
+
+# Web Frameworks
+flask>=3.0.0
+fastapi>=0.111.0
+uvicorn>=0.30.0

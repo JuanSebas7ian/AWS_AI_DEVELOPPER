@@ -1,0 +1,49 @@
+Lambda Function: math-function
+Log Group: /aws/lambda/math-function
+Search Period: Last 10 days (from 2025-11-14)
+
+=== ERROR SUMMARY ===
+
+Total Error Events Found: 3 identical errors
+
+Error Type: Runtime.UserCodeSyntaxError
+Severity: CRITICAL - Function cannot initialize
+
+=== PRIMARY ERROR ===
+
+Error: Syntax error in module 'lambda_function': invalid character '−' (U+2212) (lambda_function.py, line 7)
+
+Location: lambda_function.py, line 7
+Code: return num1 − num2
+
+Root Cause: Invalid Unicode character '−' (U+2212 - MINUS SIGN) used instead of ASCII hyphen-minus '-' (U+002D)
+
+Occurrences:
+1. 2025-11-14T00:30:55.939Z - RequestId: N/A (init error)
+2. 2025-11-14T00:30:56.067Z - RequestId: 36a7beef-3db0-4056-8797-bd32724ac7ee
+3. 2025-11-14T00:31:23.097Z - RequestId: a849a9e6-bb6a-4750-9986-a1ced75e1153
+
+Impact:
+- Function fails to initialize
+- All invocations fail immediately
+- Runtime.ExitError on every attempt
+- 100% error rate during affected period
+
+Secondary Error:
+UnicodeEncodeError: 'latin-1' codec can't encode character '\u2212' in position 79
+
+=== SUCCESSFUL INVOCATIONS (After Fix) ===
+
+After 2025-11-14T00:32:33Z, function executed successfully:
+- Multiple successful invocations with 2-15ms duration
+- No errors detected
+- Function appears fixed
+
+=== DETAILED ERROR LOGS ===
+
+[ERROR] Runtime.UserCodeSyntaxError: Syntax error in module 'lambda_function': invalid character '−' (U+2212) (lambda_function.py, line 7)
+Traceback (most recent call last):
+  File "/var/task/lambda_function.py" Line 7
+        return num1 − num2
+
+UnicodeEncodeError: 'latin-1' codec can't encode character '\u2212' in position 79: Body ('−') is not valid Latin-1. Use body.encode('utf-8') if you want to send it encoded in UTF-8.
