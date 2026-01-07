@@ -39,7 +39,7 @@ exercise2/
 
 # IDE
 .idea/
-.vscode/
+# # .vscode/
 
 # System
 thumbs.db

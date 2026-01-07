@@ -1,0 +1,7 @@
+{
+    "git.ignoredRepositories": [
+        "f:/Cursos_code",
+        "../../",
+        "../"
+    ]
+}
